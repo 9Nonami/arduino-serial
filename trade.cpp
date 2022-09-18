@@ -19,18 +19,27 @@ unsigned char current_state = CONNECTION;
 #define WAIT_DATA 1
 #define SEND_DATA 2
 #define WAIT_CONFIRM 3
-#define FINISH 4
+#define SEND_CONFIRM 4
+#define FINISH 5
 
 unsigned int connection_state = 0;
 
-String device_data = ""; //TODO random
-String client_data = "";
-String server_data = ""; //TODO
+String device_data = "";
+String received_data = "";
+
+#define OK 'k'
+
+//------------------------------------------------------------------------------//
+
+#define IR 1
+#define ER 152
 
 //------------------------------------------------------------------------------//
 
 void setup() {
   Serial.begin(9600);
+  randomSeed(analogRead(0));
+  device_data = String(random(IR, ER));
   ini = millis();
 }
 
@@ -45,6 +54,17 @@ char get_char_input () {
   return c;
 }
 
+bool is_valid(String rcvd, int irange, int erange) {
+  if (rcvd.charAt(0) == 'v' && rcvd.charAt(rcvd.length()-1) == 'w') {
+    String temp = rcvd.substring(1, rcvd.length()-1);
+    unsigned int valid = temp.toInt();
+    if (valid != 0 && valid >= irange && valid < erange) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void _update() {
   if (current_state == CONNECTION) {
     char c = get_char_input();
@@ -57,37 +77,94 @@ void _update() {
     }
   } else if (current_state == SERVER) {
     if (connection_state == WAIT_DATA) {
-      
       if (Serial.available() > 0) {
-        client_data = "";
+        received_data = "";
         while (Serial.available() > 0) {
           char c = Serial.read();
-          client_data += c;
+          received_data += c;
         }
-        if (client_data.startsWith("v") /*&& client_data.endsWith("w")*/) {
+        if (is_valid(received_data, IR, ER)) {
           ups_counter = 0;
+          received_data = received_data.substring(1, received_data.length()-1);
           connection_state = SEND_DATA;
+        } else {
+          ups_counter += 1;
+          if (ups_counter == (UPS*10)) {
+            ups_counter = 0;
+            current_state = CONNECTION;
+          }
         }
       } else {
         ups_counter += 1;
         if (ups_counter == (UPS*10)) {
           ups_counter = 0;
           current_state = CONNECTION;
-          Serial.println("Timeout!");
         }
       }
-
     } else if (connection_state == SEND_DATA) {
-      //TODO
-      Serial.println("Chegou em send.");
+      String _data = "v";
+      _data.concat(device_data);
+      _data.concat("w");
+      Serial.print(_data);
+      Serial.flush();
+      connection_state = WAIT_CONFIRM;
     } else if (connection_state == WAIT_CONFIRM) {
-      //TODO
+      char c = get_char_input();
+      if (c == OK) {
+        connection_state = FINISH;
+        ups_counter = 0;
+      } else {
+        ups_counter += 1;
+        if (ups_counter == (UPS*3)) {
+          ups_counter = 0;
+          current_state = CONNECTION;
+        }
+      }
     } else if (connection_state == FINISH) {
-      //TODO
+      device_data = received_data;
+      current_state = CONNECTION;
     }
   } else if (current_state == CLIENT) {
-    //TODO
-    Serial.println("Client chosen.");
+    if (connection_state == SEND_DATA) {
+      String _data = "v";
+      _data.concat(device_data);
+      _data.concat("w");
+      Serial.print(_data);
+      Serial.flush();
+      connection_state = WAIT_DATA;
+    } else if (connection_state == WAIT_DATA) {
+      if (Serial.available() > 0) {
+        received_data = "";
+        while (Serial.available() > 0) {
+          char c = Serial.read();
+          received_data += c;
+        }
+        if (is_valid(received_data, IR, ER)) {
+          ups_counter = 0;
+          received_data = received_data.substring(1, received_data.length()-1);
+          connection_state = SEND_CONFIRM;
+        } else {
+          ups_counter += 1;
+          if (ups_counter == (UPS*10)) {
+            ups_counter = 0;
+            current_state = CONNECTION;
+          }
+        }
+      } else {
+        ups_counter += 1;
+        if (ups_counter == (UPS*10)) {
+          ups_counter = 0;
+          current_state = CONNECTION;
+        }
+      }
+    } else if (connection_state == SEND_CONFIRM) {
+      Serial.write(OK);
+      Serial.flush();
+      connection_state = FINISH;
+    } else if (connection_state == FINISH) {
+      device_data = received_data;
+      current_state = CONNECTION;
+    }
   }
 }
 
@@ -101,3 +178,6 @@ void loop() {
     dt -= LIMIT;
   }
 }
+
+//v e w >> define
+//refac. func.
